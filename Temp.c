@@ -521,32 +521,95 @@ void removeFromQueue(Queue *q, int pid)
     }
 }
 
+// start ali
+
+// De function betloop 3al memory w btsearch 3ala x
+// lw la2eena el var, hanetba3 el data beta3to, lw laa hanetba3 en variable mesh mawgood
 void print(char* x){
-    printf("%s",x);
+    for (int i = 0; i < memoryPtr; i++) {
+        if (strcmp(memory[i].Name, x) == 0) {
+            printf("%s\n", memory[i].Data);
+            return;
+        }
+    }
+    printf("Variable %s not found\n", x);
 }
 
+// De function bt2ool lel user yada5al rakam
+// w ne7oto fel memory be esm el ID el howa el parameter y
 void assignInputInt(int y){
-    
+    int value;
+    printf("Enter an integer: ");
+    scanf("%d", &value);
+
+    char varName[10];
+    sprintf(varName, "%d", y);  // bena3mel convert lel ID le string
+
+    strcpy(memory[memoryPtr].Name, varName);         // hena esm el variable
+    sprintf(memory[memoryPtr].Data, "%d", value);    // hena el value as string
+    memoryPtr = memoryPtr + 1;                       // 3amlnaa pointer el memory
 }
 
+// De function btakhod string input men el user
+// w btsave el string da fe var esmo y
 void assignInputStr(char* y){
-    
+    char input[100];
+    printf("Enter a string: ");
+    scanf("%s", input);  // mbya5odsh spaces
+
+    strcpy(memory[memoryPtr].Name, y);       // hena el variable name
+    strcpy(memory[memoryPtr].Data, input);   // we hena el string input
+    memoryPtr = memoryPtr + 1;
 }
 
-void writeFile(char *fileName, char *data)
-{
-   
+// De function betfta7 file be esm fileName w han8ot fe el data bta3 variable esmo data
+// lw el variable mesh mawgood, hane3ml file fadya
+void writeFile(char *fileName, char *data){
+    FILE *fp = fopen(fileName, "w");
+    if (!fp) {
+        printf("Error opening file: %s\n", fileName);
+        return;
+    }
+
+    // bnedawar 3ala el variable el esmo data
+    for (int i = 0; i < memoryPtr; i++) {
+        if (strcmp(memory[i].Name, data) == 0) {
+            fprintf(fp, "%s", memory[i].Data);  // katabnaaa el content fe el file
+            fclose(fp);
+            return;
+        }
+    }
+
+    // lw mesh la2een el variable, neseeb el file fadya
+    fprintf(fp, "");
+    fclose(fp);
 }
 
-char *readFile(char *fileName)
-{
-    
+// De function bt2ra el content beta3 file we betrg3 string bel mawgood fe
+char *readFile(char *fileName){
+    static char buffer[1024];  // static 3ashan yefdal mawgood ba3d ma el function te5las
+    FILE *fp = fopen(fileName, "r");
+    if (!fp) {
+        printf("Error reading file: %s\n", fileName);
+        return NULL;
+    }
+
+    fread(buffer, sizeof(char), 1023, fp);  // ben2ra max 1023 character
+    buffer[1023] = '\0';                    // ben7ot null termination
+    fclose(fp);
+    return buffer;
 }
 
-void printFromTo(int x, int y)
-{
-    
+// De function beta3mel loop men x to y we betprint kol el numbs
+void printFromTo(int x, int y){
+    for (int i = x; i <= y; i++) {
+        printf("%d ", i);
+    }
+    printf("\n");
 }
+
+// end ali
+
 
 Mutex mutexes[3] = {
     {"userInput", 0, -1, {0}},  // For input operations
