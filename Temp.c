@@ -73,16 +73,224 @@ void sortAndFillReadyQueue(){
     
 }
 
-void readProcessAndStore(char* fileName,int arrivalTime){
+void readProcessAndStore(char* fileName, int arrivalTime) {
+    FILE *file = fopen(fileName, "r");
+    if (!file) {
+        printf("Error opening file: %s\n", fileName);
+        return;
+    }
 
+    processesArrival[processCount][0] = processCount + 1; // PID
+    processesArrival[processCount][1] = arrivalTime;
+    
+    // PCB
+    strcpy(memory[memoryPtr].Name, "PID");
+    sprintf(memory[memoryPtr].Data, "%d", processCount + 1);
+    memoryPtr++;
+    
+    strcpy(memory[memoryPtr].Name, "State");
+    strcpy(memory[memoryPtr].Data, "Ready");
+    memoryPtr++;
+    
+    strcpy(memory[memoryPtr].Name, "Priority");
+    strcpy(memory[memoryPtr].Data, "1"); 
+    memoryPtr++;
+    
+    strcpy(memory[memoryPtr].Name, "PC");
+    strcpy(memory[memoryPtr].Data, "0"); 
+    memoryPtr++;
+    
+    strcpy(memory[memoryPtr].Name, "MemoryStart");
+    sprintf(memory[memoryPtr].Data, "%d", memoryPtr + 1);
+    memoryPtr++;
+    
+    char line[256];
+    int instructionStart = memoryPtr;
+    while (fgets(line, sizeof(line), file)) {
+        line[strcspn(line, "\n")] = 0; // Remove newline
+        strcpy(memory[memoryPtr].Name, "Instruction");
+        strcpy(memory[memoryPtr].Data, line);
+        memoryPtr++;
+    }
+    
+    strcpy(memory[memoryPtr].Name, "MemoryEnd");
+    sprintf(memory[memoryPtr].Data, "%d", memoryPtr);
+    memoryPtr++;
+    
+    fclose(file);
+    processCount++;
 }
 
-void executeProcess(MemoryWord PCB[5]){
-
+void executeProcess(MemoryWord PCB[5]) {
+    int pid = atoi(PCB[0].Data);
+    int pc = atoi(PCB[3].Data);
+    int memoryStart = atoi(PCB[4].Data);
+    int memoryEnd = atoi(PCB[5].Data);
+    
+    changeStateTo(pid, "Running");
+    
+    while (pc < (memoryEnd - memoryStart)) {
+        char* instruction = memory[memoryStart + pc].Data;
+        executeInstruction(pid, instruction);
+        
+        pc++;
+        for (int i = 0; i < memoryPtr; i++) {
+            if (strcmp(memory[i].Name, "PID") == 0 && atoi(memory[i].Data) == pid) {
+                sprintf(memory[i+3].Data, "%d", pc); 
+                break;
+            }
+        }
+        
+        clock_cycles++;
+    }
+    
+    changeStateTo(pid, "Terminated");
 }
 
-int executeProcessTillQuantum(MemoryWord PCB[5],int Q){
+int executeProcessTillQuantum(MemoryWord PCB[5], int Q) {
+    int pid = atoi(PCB[0].Data);
+    int pc = atoi(PCB[3].Data);
+    int memoryStart = atoi(PCB[4].Data);
+    int memoryEnd = atoi(PCB[5].Data);
+    int instructionsExecuted = 0;
+    
+    changeStateTo(pid, "Running");
+    
+    while (pc < (memoryEnd - memoryStart) && instructionsExecuted < Q) {
+        char* instruction = memory[memoryStart + pc].Data;
+        if (executeInstruction(pid, instruction)) {
+            return Q - instructionsExecuted;
+        }
+        
+        pc++;
+        for (int i = 0; i < memoryPtr; i++) {
+            if (strcmp(memory[i].Name, "PID") == 0 && atoi(memory[i].Data) == pid) {
+                sprintf(memory[i+3].Data, "%d", pc); 
+                break;
+            }
+        }
+        
+        instructionsExecuted++;
+        clock_cycles++;
+    }
+    
+    if (pc >= (memoryEnd - memoryStart)) {
+        changeStateTo(pid, "Terminated");
+        return 0; 
+    } else {
+        changeStateTo(pid, "Ready");
+        return Q - instructionsExecuted; 
+    }
+}
 
+int executeInstruction(int pid, char* instruction) {
+    char command[20];
+    char arg1[50];
+    char arg2[50];
+    
+    int numArgs = sscanf(instruction, "%s %s %s", command, arg1, arg2);
+    
+    if (strcmp(command, "print") == 0) {
+        semWait("userOutput");
+        print(arg1);
+        semSignal("userOutput");
+    } 
+    else if (strcmp(command, "assign") == 0) {
+        if (strcmp(arg2, "input") == 0) {
+            semWait("userInput");
+            printf("Please enter a value: ");
+            char input[50];
+            scanf("%s", input);
+            strcpy(memory[memoryPtr].Name, arg1);
+            strcpy(memory[memoryPtr].Data, input);
+            memoryPtr++;
+            semSignal("userInput");
+        } else {
+            strcpy(memory[memoryPtr].Name, arg1);
+            strcpy(memory[memoryPtr].Data, arg2);
+            memoryPtr++;
+        }
+    } 
+    else if (strcmp(command, "writeFile") == 0) {
+        semWait("file");
+        writeFile(arg1, arg2);
+        semSignal("file");
+    } 
+    else if (strcmp(command, "readFile") == 0) {
+        semWait("file");
+        char* content = readFile(arg1);
+        print(content);
+        semSignal("file");
+    } 
+    else if (strcmp(command, "printFromTo") == 0) {
+        semWait("userOutput");
+        printFromTo(atoi(arg1), atoi(arg2));
+        semSignal("userOutput");
+    } 
+    else if (strcmp(command, "semWait") == 0) {
+        semWait(arg1);
+        return 1; 
+    } 
+    else if (strcmp(command, "semSignal") == 0) {
+        semSignal(arg1);
+    }
+    
+    return 0; 
+}
+
+void semWait(char *resource) {
+    int pid = current_running_pid;
+    
+    Mutex *mutex = NULL;
+    for (int i = 0; i < 3; i++) {
+        if (strcmp(mutexes[i].name, resource) == 0) {
+            mutex = &mutexes[i];
+            break;
+        }
+    }
+    
+    if (!mutex) return;
+    
+    if (mutex->is_locked) {
+        changeStateTo(pid, "Blocked");
+        enqueue(&mutex->blocked_queue, pid);
+        enqueue(&all_blocked_queue, pid);
+        removeFromQueue(&ready_queue, pid);
+    } else {
+        mutex->is_locked = 1;
+        mutex->locked_by_pid = pid;
+    }
+}
+
+void semSignal(char *resource) {
+    Mutex *mutex = NULL;
+    for (int i = 0; i < 3; i++) {
+        if (strcmp(mutexes[i].name, resource) == 0) {
+            mutex = &mutexes[i];
+            break;
+        }
+    }
+    
+    if (!mutex) return;
+    
+    if (!isEmpty(&mutex->blocked_queue)) {
+        int pid = dequeue(&mutex->blocked_queue);
+        removeFromQueue(&all_blocked_queue, pid);
+        
+        char priority[2];
+        for (int i = 0; i < memoryPtr; i++) {
+            if (strcmp(memory[i].Name, "PID") == 0 && atoi(memory[i].Data) == pid) {
+                strcpy(priority, memory[i+2].Data);
+                break;
+            }
+        }
+        
+        changeStateTo(pid, "Ready");
+        enqueue(&ready_queue, pid);
+    } else {
+        mutex->is_locked = 0;
+        mutex->locked_by_pid = -1;
+    }
 }
 
 void FCFS(){
