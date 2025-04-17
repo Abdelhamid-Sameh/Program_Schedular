@@ -26,28 +26,30 @@ int isEmpty(Queue* q) {
 }
 
 // Enqueue (add an element)
+// Modify enqueue and dequeue for circular behavior:
 void enqueue(Queue* q, int value) {
-    if (isFull(q)) {
+    if ((q->rear + 1) % MAX_SIZE == q->front) {  // Check if full
         printf("Queue is full\n");
         return;
     }
-    if (q->front == -1) {
-        q->front = 0;  // If queue is empty, set front to 0
+    if (isEmpty(q)) {
+        q->front = q->rear = 0;
+    } else {
+        q->rear = (q->rear + 1) % MAX_SIZE;  // Wrap around
     }
-    q->rear++;
     q->items[q->rear] = value;
 }
 
-// Dequeue (remove an element)
 int dequeue(Queue* q) {
     if (isEmpty(q)) {
         printf("Queue is empty\n");
-        return -1;  // Return -1 if the queue is empty
+        return -1;
     }
     int value = q->items[q->front];
-    q->front++;
-    if (q->front > q->rear) {  // Reset queue when it's empty
-        q->front = q->rear = -1;
+    if (q->front == q->rear) {
+        q->front = q->rear = -1;  // Reset if last element
+    } else {
+        q->front = (q->front + 1) % MAX_SIZE;  // Wrap around
     }
     return value;
 }
@@ -61,16 +63,16 @@ int peek(Queue* q) {
     return q->items[q->front];
 }
 
-int main() {
-    Queue q;
-    initQueue(&q);
+// int main() {
+//     Queue q;
+//     initQueue(&q);
 
-    enqueue(&q, 10);
-    enqueue(&q, 20);
-    enqueue(&q, 30);
+//     enqueue(&q, 10);
+//     enqueue(&q, 20);
+//     enqueue(&q, 30);
 
-    printf("Dequeued: %d\n", dequeue(&q));
-    printf("Front element: %d\n", peek(&q));
+//     printf("Dequeued: %d\n", dequeue(&q));
+//     printf("Front element: %d\n", peek(&q));
 
-    return 0;
-}
+//     return 0;
+// }
