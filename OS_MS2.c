@@ -1,7 +1,11 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include "Queue.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
+
 
 typedef struct {
     char str[256];
@@ -21,6 +25,7 @@ typedef struct
 } Mutex;
 
 MemoryWord memory[60];
+MemoryWord* memoryGlobalPtr = memory;
 
 int memoryPtr = 0;
 int processCount = 0;
@@ -29,10 +34,118 @@ int clock_cycles = 0;
 
 int processesArrival[5][2];
 
+int lastProcessRR[1][2];
+
+char guiCurAlgoStorage[256];
+char* currentAlgo = guiCurAlgoStorage;
+int* guiReadyQ;
+int* guiPCB;
+char guiCurInstStorage[256];
+char* guiCurInst = guiCurInstStorage;
+
+int startFlag = 0;
+int stopFlag = 0;
+int stepFlag = 0;
+int finishFlag = 0;
+
+bool simKillFlag = false;
+
 Queue all_blocked_queue;
 Queue ready_queue;
+Queue rrQueue;
+Queue fcfsQueue;
+Queue MLF1Queue;
+Queue MLF2Queue;
+Queue MLF3Queue;
+Queue MLF4Queue;
+
 
 int current_running_pid = -1;
+
+Mutex mutexes[3] = {
+    {"userInput", 0, -1,},  // For input operations
+    {"userOutput", 0, -1,}, // For print operations
+    {"file", 0, -1,}        // For file operations
+};
+
+void start(){startFlag = 1;stopFlag = 0;}
+void stop(){stopFlag = 1;}
+void step(){stepFlag = 1;}
+void finish(){finishFlag = 1;}
+
+void resetSimulation() {
+    // Clear all queues
+    initQueue(&fcfsQueue);
+    initQueue(&rrQueue);
+    initQueue(&MLF1Queue);
+    initQueue(&MLF2Queue);
+    initQueue(&MLF3Queue);
+    initQueue(&MLF4Queue);
+    initQueue(&ready_queue);
+    initQueue(&all_blocked_queue);
+    initQueue(&mutexes[0].blocked_queue);
+    initQueue(&mutexes[1].blocked_queue);
+    initQueue(&mutexes[2].blocked_queue);
+
+    mutexes[0].is_locked = 0;
+    mutexes[0].locked_by_pid = -1;
+
+    mutexes[1].is_locked = 0;
+    mutexes[1].locked_by_pid = -1;
+
+    mutexes[2].is_locked = 0;
+    mutexes[2].locked_by_pid = -1;
+
+    // Clear memory
+    for (int i = 0; i < 60; i++) {
+        strcpy(memory[i].Name, "");
+        strcpy(memory[i].Data, "");
+    }
+
+    for (int i = 0; i < 5; i++)
+    {
+        processesArrival[i][0] = 0;
+        processesArrival[i][1] = 0;
+    }
+    
+    lastProcessRR[0][0] = 0;
+    lastProcessRR[0][1] = 0;
+
+
+    // Reset other global variables
+    startFlag = 0;
+    stopFlag = 0;
+    finishFlag = 0;
+    stepFlag = 0;
+    clock_cycles = 0;
+    memoryPtr = 0;
+    processCount = 0;
+    current_running_pid = -1;
+    strcpy(currentAlgo, "");
+    simKillFlag = false;
+}
+
+
+MemoryWord* getMemory(){return memoryGlobalPtr;}
+int getProcessCount(){return processCount;}
+int getClockCycles(){return clock_cycles;}
+
+Queue getUserInputQ(){return mutexes[0].blocked_queue;}
+Queue getUserOnputQ(){return mutexes[1].blocked_queue;}
+Queue getFileQ(){return mutexes[2].blocked_queue;}
+
+int getUserInputStatus(){return mutexes[0].locked_by_pid;}
+int getUserOnputStatus(){return mutexes[1].locked_by_pid;}
+int getFileStatus(){return mutexes[2].locked_by_pid;}
+char* getCurrentAlgo(){return currentAlgo;}
+
+Queue getFCFSQ(){return fcfsQueue;}
+Queue getRRQ(){return rrQueue;}
+Queue getMLF1Q(){return MLF1Queue;}
+Queue getMLF2Q(){return MLF2Queue;}
+Queue getMLF3Q(){return MLF3Queue;}
+Queue getMLF4Q(){return MLF4Queue;}
+Queue getBlockedQ(){return all_blocked_queue;}
 
 void getState(int pid,char* state){
     for (int i = 0; i < memoryPtr; i++)
@@ -45,7 +158,7 @@ void getState(int pid,char* state){
 }
 
 int getPC(int pid){
-    int PC;
+    int PC = 0;
     for (int i = 0; i < memoryPtr; i++)
     {
         if(strcmp(memory[i].Name,"PID") == 0 && atoi(memory[i].Data) == pid){
@@ -57,7 +170,7 @@ int getPC(int pid){
 }
 
 int getMemEnd(int pid){
-    int memEnd;
+    int memEnd = 0;
     for (int i = 0; i < memoryPtr; i++)
     {
         if(strcmp(memory[i].Name,"PID") == 0 && atoi(memory[i].Data) == pid){
@@ -68,8 +181,20 @@ int getMemEnd(int pid){
     return memEnd;
 }
 
+int getMemStart(int pid){
+    int memStart = 0;
+    for (int i = 0; i < memoryPtr; i++)
+    {
+        if(strcmp(memory[i].Name,"PID") == 0 && atoi(memory[i].Data) == pid){
+            memStart = atoi(memory[i+4].Data);
+            break;
+        }
+    }
+    return memStart;
+}
+
 int getPri(int pid){
-    int Pri;
+    int Pri = 0;
     for (int i = 0; i < memoryPtr; i++)
     {
         if(strcmp(memory[i].Name,"PID") == 0 && atoi(memory[i].Data) == pid){
@@ -78,6 +203,14 @@ int getPri(int pid){
         }
     }
     return Pri;
+}
+
+int getRunningPID(){return current_running_pid;}
+
+char* getCurInst(int pid){
+    int ind = getPC(pid);
+    strcpy(guiCurInst, memory[ind].Data);
+    return guiCurInst;
 }
 
 void removeFromQueue(Queue *q, int pid)
@@ -96,31 +229,6 @@ void removeFromQueue(Queue *q, int pid)
     {
         enqueue(q, dequeue(&temp));
     }
-}
-
-int isAllBlocked(Queue *q){
-    int result = 1;
-
-    Queue temp;
-    initQueue(&temp);
-
-    while (!isEmpty(q))
-    {
-        int val = dequeue(q);
-        char state[50];
-        getState(val,state);
-        if(strcmp(state,"Blocked") != 0){
-            result = 0;
-        }
-        enqueue(&temp,val);
-    }
-
-    while (!isEmpty(&temp))
-    {
-        enqueue(q, dequeue(&temp));
-    }
-
-    return result;
 }
 
 void print(char* x){
@@ -180,12 +288,6 @@ void printFromTo(int x, int y)
     printf("\n");
 }
 
-Mutex mutexes[3] = {
-    {"userInput", 0, -1, {}},  // For input operations
-    {"userOutput", 0, -1, {}}, // For print operations
-    {"file", 0, -1, {}}        // For file operations
-};
-
 void initAllQueues()
 {
     initQueue(&ready_queue);
@@ -210,6 +312,10 @@ int getArrivalTime(int pid){
     }
     return -1;
     
+}
+
+int getTimeInQueue(int pid){
+    return clock_cycles - getArrivalTime(pid);
 }
 
 void changePriTo(int pid, char* pri){
@@ -331,12 +437,14 @@ void semWait(int pid,char *resource)
                 changeStateTo(pid,"Blocked");
                 enqueue(&mutexes[i].blocked_queue, pid);
                 enqueue(&all_blocked_queue, pid);
+                printf("Process %d is blocked from acquiring %s\n",pid,resource);
             }
             else
             {
                 // Acquire the resource
                 mutexes[i].is_locked = 1;
                 mutexes[i].locked_by_pid = pid;
+                printf("Process %d acquired %s\n",pid,resource);
             }
             return;
         }
@@ -358,12 +466,35 @@ void semSignal(int pid,char *resource)
                 removeFromQueue(&all_blocked_queue, unblocked_pid);
 
                 changeStateTo(unblocked_pid,"Ready");
+                if(strcmp(getCurrentAlgo(),"FCFS") == 0){
+                    enqueue(&fcfsQueue,unblocked_pid);
+                }
+                else if(strcmp(getCurrentAlgo(),"RR") == 0){
+                    enqueue(&rrQueue,unblocked_pid);
+                }
+                else{
+                    if(getPri(unblocked_pid) == 1){
+                        enqueue(&MLF2Queue,unblocked_pid);
+                        changePriTo(unblocked_pid,"2");
+                    }
+                    else if(getPri(unblocked_pid) == 2){
+                        enqueue(&MLF3Queue,unblocked_pid);
+                        changePriTo(unblocked_pid,"3");
+                    }
+                    else{
+                        enqueue(&MLF4Queue,unblocked_pid);
+                        changePriTo(unblocked_pid,"4");
+                    } 
+                }
+                printf("Process %d released resource %s\n",pid,resource);
+                printf("Process %d is unblocked and acquired resource %s\n",unblocked_pid,resource);
             }
             else
             {
                 // No waiters - release resource
                 mutexes[i].is_locked = 0;
                 mutexes[i].locked_by_pid = -1;
+                printf("Process %d released resource %s\n",pid,resource);
             }
             return;
         }
@@ -408,7 +539,7 @@ void readProcessAndStore(char* fileName,int arrivalTime){
         }
         fclose(file);
     } else {
-        printf("Error: could not open file !");
+        printf("Error: could not open file !\n");
     }
 
     int LB = memoryPtr;
@@ -456,6 +587,7 @@ void readProcessAndStore(char* fileName,int arrivalTime){
 }
 
 void executeInstruction(int pid, char* instruction){
+    printf("Instruction : %s\n",instruction);
     char command[20];
     char arg1[50];
     char arg2[50];
@@ -465,6 +597,7 @@ void executeInstruction(int pid, char* instruction){
     int numArgs = sscanf(instruction, "%s %s %s %s", command, arg1, arg2, optionalarg3);
     
     if (strcmp(command, "print") == 0) {
+        printf("Reaction : printing var %s\n",arg1);
         if(strcmp(arg1, "a") == 0){
             print(readAOf(pid));
         }
@@ -477,9 +610,11 @@ void executeInstruction(int pid, char* instruction){
     } 
     else if (strcmp(command, "assign") == 0) {
         if (strcmp(arg2, "input") == 0) {
+            printf("Reaction : assigning user input to var %s\n",arg1);
             printf("Please enter a value: ");
             char input[50];
             scanf("%s", input);
+            printf("\n");
             assignInput(pid,input,arg1);
         } else if(strcmp(arg2, "readFile") == 0){
             char* input;
@@ -493,6 +628,7 @@ void executeInstruction(int pid, char* instruction){
             else{
                 fileName = readCOf(pid);
             }
+            printf("Reaction : assigning contents of file \"%s\" to var %s\n",fileName,arg1);
             input = readFile(fileName);
             assignInput(pid,input,arg1);
         }
@@ -519,9 +655,11 @@ void executeInstruction(int pid, char* instruction){
         else{
             input = readCOf(pid);
         }
+        printf("Reaction : writing to file \"%s\" content of var %s\n",fileName,arg2);
         writeFile(fileName, input);
     } 
     else if (strcmp(command, "printFromTo") == 0) {
+        printf("Reaction : printing from var %s to var %s\n",arg1,arg2);
         int a;
         int b;
 
@@ -547,9 +685,11 @@ void executeInstruction(int pid, char* instruction){
         printFromTo(a, b);
     } 
     else if (strcmp(command, "semWait") == 0) {
+        printf("Reaction : trying to acquire resource %s\n",arg1);
         semWait(pid,arg1);
     } 
     else if (strcmp(command, "semSignal") == 0) {
+        printf("Reaction : releasing resource %s\n",arg1);
         semSignal(pid,arg1);
     }
     
@@ -569,7 +709,10 @@ void executeProcess(int pid){
         
         changePCTo(pid,pc);
         
+        while(stopFlag == 1){}
+        while(stepFlag == 0 && finishFlag == 0){}
         clock_cycles++;
+        stepFlag = (finishFlag == 1)? 1:0;
     }
     
     changeStateTo(pid, "Terminated");
@@ -592,11 +735,15 @@ int executeProcessTillQuantum(int pid,int Q){
         char* instruction = memory[pc].Data;
         pc++;
         executeInstruction(pid, instruction);
+
         clockCount++;
         
         changePCTo(pid,pc);
         
+        while(stopFlag == 1){}
+        while(stepFlag == 0 && finishFlag == 0){}
         clock_cycles++;
+        stepFlag = (finishFlag == 1)? 1:0;
     }
     if(pc == (memoryEnd - 2)){
         changeStateTo(pid, "Terminated");
@@ -606,31 +753,37 @@ int executeProcessTillQuantum(int pid,int Q){
 }
 
 void FCFS(){
-    Queue fcfsQueue;
     initQueue(&fcfsQueue);
 
-    while (!isEmpty(&ready_queue))
+    while(startFlag == 0){}
+
+    while (!isEmpty(&ready_queue) && !simKillFlag)
     {
         int pid = peek(&ready_queue);
         int arrTime = getArrivalTime(pid);
         if(arrTime <= clock_cycles){
             enqueue(&fcfsQueue,dequeue(&ready_queue));            
             current_running_pid = pid;
+            printf("Process ID : %d\n",pid);
             executeProcess(pid);
             dequeue(&fcfsQueue);
         }
         else{
+            while(stopFlag == 1){}
+            while(stepFlag == 0 && finishFlag == 0){}
             clock_cycles++;
+            stepFlag = (finishFlag == 1)? 1:0 ;
         }
     }
     
 }
 
 void RR(int Q){
-    Queue rrQueue;
     initQueue(&rrQueue);
 
-    while(!isEmpty(&ready_queue) || !isEmpty(&rrQueue)){
+    while(startFlag == 0){}
+
+    while((!isEmpty(&ready_queue) || !isEmpty(&rrQueue)) && !simKillFlag){
         int arrTime;
 
         if(!isEmpty(&ready_queue)){
@@ -643,42 +796,47 @@ void RR(int Q){
                 }
             }while(arrTime <= clock_cycles && !isEmpty(&ready_queue));
         }
+
+        if(lastProcessRR[0][1]){
+            enqueue(&rrQueue,lastProcessRR[0][0]);
+        }
         
         if(!isEmpty(&rrQueue)){
             int pid = peek(&rrQueue);
             char state[50];
-            getState(pid,state);
-            while(strcmp(state,"Blocked") == 0){
-                enqueue(&rrQueue,dequeue(&rrQueue));
-                pid = peek(&rrQueue);
-                getState(pid,state);
-            }
             dequeue(&rrQueue);
             current_running_pid = pid;
+            printf("Process ID : %d\n",pid);
             int rem = executeProcessTillQuantum(pid,Q);
-            if(rem > 0){
-                enqueue(&rrQueue,pid);
+            getState(pid,state);
+
+            if(rem > 0 && strcmp(state,"Blocked") != 0){
+                lastProcessRR[0][0] = pid;
+                lastProcessRR[0][1] = 1;
+            }
+            else{
+                lastProcessRR[0][1] = 0;
             }
         }
         else{
+            while(stopFlag == 1){}
+            while(stepFlag == 0 && finishFlag == 0){}
             clock_cycles++;
+            stepFlag = (finishFlag == 1)? 1:0;
         }
     }
     
 }
 
 void MLFQ(){
-    Queue MLF1Queue;
-    Queue MLF2Queue;
-    Queue MLF3Queue;
-    Queue MLF4Queue;
-
     initQueue(&MLF1Queue);
     initQueue(&MLF2Queue);
     initQueue(&MLF3Queue);
     initQueue(&MLF4Queue);
 
-    while(!isEmpty(&ready_queue) || !isEmpty(&MLF1Queue) || !isEmpty(&MLF2Queue) || !isEmpty(&MLF3Queue) || !isEmpty(&MLF4Queue)){
+    while(startFlag == 0){}
+
+    while((!isEmpty(&ready_queue) || !isEmpty(&MLF1Queue) || !isEmpty(&MLF2Queue) || !isEmpty(&MLF3Queue) || !isEmpty(&MLF4Queue)) && !simKillFlag){
         int arrTime;
 
         if(!isEmpty(&ready_queue)){
@@ -693,123 +851,109 @@ void MLFQ(){
             }while(arrTime <= clock_cycles && !isEmpty(&ready_queue));
         }
 
-        if(!isEmpty(&MLF1Queue) && !isAllBlocked(&MLF1Queue)){
+        if(!isEmpty(&MLF1Queue)){
             int pid = peek(&MLF1Queue);
             char state[50];
-            getState(pid,state);
-            while(strcmp(state,"Blocked") == 0){
-                enqueue(&MLF1Queue,dequeue(&MLF1Queue));
-                pid = peek(&MLF1Queue);
-                getState(pid,state);
-            }
-
             dequeue(&MLF1Queue);
             current_running_pid = pid;
+            printf("Process ID : %d\n",pid);
             int rem = executeProcessTillQuantum(pid,1);
-            if(rem > 0){
+            getState(pid,state);
+            if(rem > 0 && strcmp(state,"Blocked") != 0){
                 enqueue(&MLF2Queue,pid);
                 changePriTo(pid,"2");
             }
         }
 
-        else if(!isEmpty(&MLF2Queue) && !isAllBlocked(&MLF2Queue)){
+        else if(!isEmpty(&MLF2Queue)){
             int pid = peek(&MLF2Queue);
             char state[50];
-            getState(pid,state);
-            while(strcmp(state,"Blocked") == 0){
-                enqueue(&MLF2Queue,dequeue(&MLF2Queue));
-                pid = peek(&MLF2Queue);
-                getState(pid,state);
-            }
-
             dequeue(&MLF2Queue);
             current_running_pid = pid;
+            printf("Process ID : %d\n",pid);
             int rem = executeProcessTillQuantum(pid,2);
-            if(rem > 0){
+            getState(pid,state);
+            if(rem > 0 && strcmp(state,"Blocked") != 0){
                 enqueue(&MLF3Queue,pid);
                 changePriTo(pid,"3");
             }
         }
 
-        else if(!isEmpty(&MLF3Queue) && !isAllBlocked(&MLF3Queue)){
+        else if(!isEmpty(&MLF3Queue)){
             int pid = peek(&MLF3Queue);
             char state[50];
-            getState(pid,state);
-            while(strcmp(state,"Blocked") == 0){
-                enqueue(&MLF3Queue,dequeue(&MLF3Queue));
-                pid = peek(&MLF3Queue);
-                getState(pid,state);
-            }
-
             dequeue(&MLF3Queue);
             current_running_pid = pid;
+            printf("Process ID : %d\n",pid);
             int rem = executeProcessTillQuantum(pid,4);
-            if(rem > 0){
+            getState(pid,state);
+            if(rem > 0 && strcmp(state,"Blocked") != 0){
                 enqueue(&MLF4Queue,pid);
                 changePriTo(pid,"4");
             }
         }
 
-        else if(!isEmpty(&MLF4Queue) && !isAllBlocked(&MLF4Queue)){
+        else if(!isEmpty(&MLF4Queue)){
             int pid = peek(&MLF4Queue);
             char state[50];
-            getState(pid,state);
-            while(strcmp(state,"Blocked") == 0){
-                enqueue(&MLF4Queue,dequeue(&MLF4Queue));
-                pid = peek(&MLF4Queue);
-                getState(pid,state);
-            }
-
             dequeue(&MLF4Queue);
             current_running_pid = pid;
+            printf("Process ID : %d\n",pid);
             int rem = executeProcessTillQuantum(pid,8);
-            if(rem > 0){
+            getState(pid,state);
+            if(rem > 0 && strcmp(state,"Blocked") != 0){
                 enqueue(&MLF4Queue,pid);
             }
         }
 
         else{
+            while(stopFlag == 1){}
+            while(stepFlag == 0 && finishFlag == 0){}
             clock_cycles++;
+            stepFlag = (finishFlag == 1)? 1:0;
         }
     }
 
 }
 
 void chooseSchd(int s,int Q){
+    initAllQueues();
     sortAndFillReadyQueue();
     switch (s)
     {
-    case 1:FCFS();break;
-    case 2:RR(Q);break;
-    case 3:MLFQ();break;
+    case 1:strcpy(currentAlgo,"FCFS");FCFS();break;
+    case 2:strcpy(currentAlgo,"RR");RR(Q);break;
+    case 3:strcpy(currentAlgo,"MLFQ");MLFQ();break;
     default:printf("Invalid Choice !");break;
     }
 }
 
-void ProgramFlow(){
-    initAllQueues();
-    printf("Please choose a scheduling algorithm :\n");
-    printf("1.FCFS\n2.RR\n3.MLFQ\n");
-    int s;
-    int Q;
-    scanf("%d",&s);
-    if(s == 2){
-        printf("Please enter the quantum for RR :\n");
-        scanf("%d",&Q);
-    }
-    chooseSchd(s,Q);
-}
+// void ProgramFlow(){
+//     initAllQueues();
+//     printf("Please choose a scheduling algorithm :\n");
+//     printf("1.FCFS\n2.RR\n3.MLFQ\n");
+//     int s;
+//     int Q = 0;
+//     scanf("%d",&s);
+//     if(s == 2){
+//         printf("Please enter the quantum for RR :\n");
+//         scanf("%d",&Q);
+//     }
+//     chooseSchd(s,Q);
+// }
 
-int main(){
-    readProcessAndStore("Program_1.txt",0);
-    readProcessAndStore("Program_2.txt",0);
-    readProcessAndStore("Program_3.txt",0);
+// int main(){
+//    readProcessAndStore("Program_1.txt",0);
+//    readProcessAndStore("Program_2.txt",2);
+//    readProcessAndStore("Program_3.txt",3);
+//    start();
+//    finish();
 
-    for (int i = 0; i < memoryPtr; i++)
-    {
-        printf("%s : %s\n",memory[i].Name,memory[i].Data);
-    }
-    
-    ProgramFlow();
+//    for (int i = 0; i < memoryPtr; i++)
+//    {
+//        printf("%s : %s\n",memory[i].Name,memory[i].Data);
+//    }
+   
+//    ProgramFlow();
 
-}
+// }
