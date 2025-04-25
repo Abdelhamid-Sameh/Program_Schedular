@@ -205,6 +205,12 @@ static void on_reset_clicked(GtkButton *btn, gpointer d)
         sim_thread = NULL;
     }
 
+    if (console_thread)
+    {
+        g_thread_unref(console_thread);
+        console_thread = NULL;
+    }
+
     // 3. Reset simulation state (optional)
     resetSimulation(); // We'll define this next
 

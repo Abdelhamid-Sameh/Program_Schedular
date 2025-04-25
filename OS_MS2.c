@@ -742,7 +742,7 @@ void checkArrived()
     }
 }
 
-void executeInstruction(int pid, char *instruction)
+int executeInstruction(int pid, char *instruction)
 {
     printf("Instruction : %s\n", instruction);
     char command[20];
@@ -777,6 +777,11 @@ void executeInstruction(int pid, char *instruction)
             waitingForInput = true;
             waitingPid = pid;
             strcpy(waitingVar, arg1);
+            while (waitingForInput)
+            {
+                if (simKillFlag)
+                    return -1;
+            }
         }
         else if (strcmp(arg2, "readFile") == 0)
         {
@@ -874,9 +879,10 @@ void executeInstruction(int pid, char *instruction)
         printf("Reaction : releasing resource %s\n", arg1);
         semSignal(pid, arg1);
     }
+    return 0;
 }
 
-void executeProcess(int pid)
+int executeProcess(int pid)
 {
     int pc = getPC(pid);
     int memoryEnd = getMemEnd(pid);
@@ -887,22 +893,31 @@ void executeProcess(int pid)
     {
         char *instruction = memory[pc].Data;
         pc++;
-        executeInstruction(pid, instruction);
-
-        changePCTo(pid, pc);
-
+        int rem = executeInstruction(pid, instruction);
+        if (rem == -1)
+            return -1;
         while (stopFlag == 1)
         {
+            if (simKillFlag)
+            {
+                return -1;
+            }
         }
         while (stepFlag == 0 && finishFlag == 0)
         {
+            if (simKillFlag)
+            {
+                return -1;
+            }
         }
         clock_cycles++;
         stepFlag = (finishFlag == 1) ? 1 : 0;
+        changePCTo(pid, pc);
         checkArrived();
     }
 
     changeStateTo(pid, "Terminated");
+    return 0;
 }
 
 int executeProcessTillQuantum(int pid, int Q)
@@ -924,20 +939,28 @@ int executeProcessTillQuantum(int pid, int Q)
 
         char *instruction = memory[pc].Data;
         pc++;
-        executeInstruction(pid, instruction);
-
+        int rem = executeInstruction(pid, instruction);
+        if (rem == -1)
+            return -1;
         clockCount++;
-
-        changePCTo(pid, pc);
 
         while (stopFlag == 1)
         {
+            if (simKillFlag)
+            {
+                return -1;
+            }
         }
         while (stepFlag == 0 && finishFlag == 0)
         {
+            if (simKillFlag)
+            {
+                return -1;
+            }
         }
         clock_cycles++;
         stepFlag = (finishFlag == 1) ? 1 : 0;
+        changePCTo(pid, pc);
         checkArrived();
     }
     if (pc == (memoryEnd - 2))
@@ -954,6 +977,8 @@ void FCFS()
 
     while (startFlag == 0)
     {
+        if (simKillFlag)
+            return;
     }
 
     while ((processesRemovePtr < processesInsertPtr || !isEmpty(&fcfsQueue)) && !simKillFlag)
@@ -976,16 +1001,21 @@ void FCFS()
             int pid = peek(&fcfsQueue);
             current_running_pid = pid;
             printf("Process ID : %d\n", pid);
-            executeProcess(pid);
-            dequeue(&fcfsQueue);
+            int rem = executeProcess(pid);
+            if (rem != -1)
+                dequeue(&fcfsQueue);
         }
         else
         {
             while (stopFlag == 1)
             {
+                if (simKillFlag)
+                    return;
             }
             while (stepFlag == 0 && finishFlag == 0)
             {
+                if (simKillFlag)
+                    return;
             }
             clock_cycles++;
             stepFlag = (finishFlag == 1) ? 1 : 0;
@@ -999,9 +1029,11 @@ void RR(int Q)
 
     while (startFlag == 0)
     {
+        if (simKillFlag)
+            return;
     }
 
-    while ((processesRemovePtr < processesInsertPtr || !isEmpty(&rrQueue)) && !simKillFlag)
+    while ((processesRemovePtr < processesInsertPtr || !isEmpty(&rrQueue) || lastProcessRR[0][1]) && !simKillFlag)
     {
         int arrTime;
 
@@ -1030,26 +1062,32 @@ void RR(int Q)
             current_running_pid = pid;
             printf("Process ID : %d\n", pid);
             int rem = executeProcessTillQuantum(pid, Q);
-            dequeue(&rrQueue);
-            getState(pid, state);
-
-            if (rem > 0 && strcmp(state, "Blocked") != 0)
+            if (rem != -1)
             {
-                lastProcessRR[0][0] = pid;
-                lastProcessRR[0][1] = 1;
-            }
-            else
-            {
-                lastProcessRR[0][1] = 0;
+                dequeue(&rrQueue);
+                getState(pid, state);
+                if (rem > 0 && strcmp(state, "Blocked") != 0)
+                {
+                    lastProcessRR[0][0] = pid;
+                    lastProcessRR[0][1] = 1;
+                }
+                else
+                {
+                    lastProcessRR[0][1] = 0;
+                }
             }
         }
         else
         {
             while (stopFlag == 1)
             {
+                if (simKillFlag)
+                    return;
             }
             while (stepFlag == 0 && finishFlag == 0)
             {
+                if (simKillFlag)
+                    return;
             }
             clock_cycles++;
             stepFlag = (finishFlag == 1) ? 1 : 0;
@@ -1066,6 +1104,8 @@ void MLFQ()
 
     while (startFlag == 0)
     {
+        if (simKillFlag)
+            return;
     }
 
     while ((processesRemovePtr < processesInsertPtr || !isEmpty(&MLF1Queue) || !isEmpty(&MLF2Queue) || !isEmpty(&MLF3Queue) || !isEmpty(&MLF4Queue)) && !simKillFlag)
@@ -1092,12 +1132,15 @@ void MLFQ()
             current_running_pid = pid;
             printf("Process ID : %d\n", pid);
             int rem = executeProcessTillQuantum(pid, 1);
-            dequeue(&MLF1Queue);
-            getState(pid, state);
-            if (rem > 0 && strcmp(state, "Blocked") != 0)
+            if (rem != -1)
             {
-                enqueue(&MLF2Queue, pid);
-                changePriTo(pid, "2");
+                dequeue(&MLF1Queue);
+                getState(pid, state);
+                if (rem > 0 && strcmp(state, "Blocked") != 0)
+                {
+                    enqueue(&MLF2Queue, pid);
+                    changePriTo(pid, "2");
+                }
             }
         }
 
@@ -1108,12 +1151,15 @@ void MLFQ()
             current_running_pid = pid;
             printf("Process ID : %d\n", pid);
             int rem = executeProcessTillQuantum(pid, 2);
-            dequeue(&MLF2Queue);
-            getState(pid, state);
-            if (rem > 0 && strcmp(state, "Blocked") != 0)
+            if (rem != -1)
             {
-                enqueue(&MLF3Queue, pid);
-                changePriTo(pid, "3");
+                dequeue(&MLF2Queue);
+                getState(pid, state);
+                if (rem > 0 && strcmp(state, "Blocked") != 0)
+                {
+                    enqueue(&MLF3Queue, pid);
+                    changePriTo(pid, "3");
+                }
             }
         }
 
@@ -1124,12 +1170,15 @@ void MLFQ()
             current_running_pid = pid;
             printf("Process ID : %d\n", pid);
             int rem = executeProcessTillQuantum(pid, 4);
-            dequeue(&MLF3Queue);
-            getState(pid, state);
-            if (rem > 0 && strcmp(state, "Blocked") != 0)
+            if (rem != -1)
             {
-                enqueue(&MLF4Queue, pid);
-                changePriTo(pid, "4");
+                dequeue(&MLF3Queue);
+                getState(pid, state);
+                if (rem > 0 && strcmp(state, "Blocked") != 0)
+                {
+                    enqueue(&MLF4Queue, pid);
+                    changePriTo(pid, "4");
+                }
             }
         }
 
@@ -1140,11 +1189,14 @@ void MLFQ()
             current_running_pid = pid;
             printf("Process ID : %d\n", pid);
             int rem = executeProcessTillQuantum(pid, 8);
-            dequeue(&MLF4Queue);
-            getState(pid, state);
-            if (rem > 0 && strcmp(state, "Blocked") != 0)
+            if (rem != -1)
             {
-                enqueue(&MLF4Queue, pid);
+                dequeue(&MLF4Queue);
+                getState(pid, state);
+                if (rem > 0 && strcmp(state, "Blocked") != 0)
+                {
+                    enqueue(&MLF4Queue, pid);
+                }
             }
         }
 
@@ -1152,9 +1204,13 @@ void MLFQ()
         {
             while (stopFlag == 1)
             {
+                if (simKillFlag)
+                    return;
             }
             while (stepFlag == 0 && finishFlag == 0)
             {
+                if (simKillFlag)
+                    return;
             }
             clock_cycles++;
             stepFlag = (finishFlag == 1) ? 1 : 0;
