@@ -550,7 +550,7 @@ void semSignal(int pid, char *resource)
                 int unblocked_pid = removeHighestPri(&mutexes[i].blocked_queue);
                 removeFromQueue(&mutexes[i].blocked_queue, unblocked_pid);
                 removeFromQueue(&all_blocked_queue, unblocked_pid);
-
+                mutexes[i].locked_by_pid = unblocked_pid;
                 changeStateTo(unblocked_pid, "Ready");
                 if (strcmp(getCurrentAlgo(), "FCFS") == 0)
                 {
@@ -967,6 +967,16 @@ int executeProcessTillQuantum(int pid, int Q)
     {
         changeStateTo(pid, "Terminated");
         return 0;
+    }
+
+    if (clockCount == Q && strcmp(currentAlgo, "MLFQ") == 0)
+    {
+        if (getPri(pid) == 1)
+            changePriTo(pid, "2");
+        else if (getPri(pid) == 2)
+            changePriTo(pid, "3");
+        else
+            changePriTo(pid, "4");
     }
     return (memoryEnd - 2) - pc;
 }
